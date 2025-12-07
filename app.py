@@ -20,10 +20,6 @@ ENDPOINT_NAME = st.secrets.get("ENDPOINT_NAME", os.getenv("ENDPOINT_NAME", "cros
 # ============================================================
 # FEATURE SCHEMA – HARUS MATCH DENGAN SIGNATURE ENDPOINT
 # ============================================================
-# Schema ini dibuat berdasarkan error message dari endpoint dan
-# table stage2_clean_feature_table. Kalau ada perbedaan, update
-# nama kolom / default value di sini.
-#
 # Format:
 #   "nama_kolom": (tipe, default_value)
 #   tipe:
@@ -105,11 +101,12 @@ FEATURE_SCHEMA = {
 # ============================================================
 
 def call_databricks_endpoint(records):
-    \"\"\"Mengirim list of dict (records) ke Databricks Serving Endpoint
+    """
+    Mengirim list of dict (records) ke Databricks Serving Endpoint
     dan mengembalikan list skor prediksi (probability 0–1).
 
     records: list[dict] - tiap dict = 1 row fitur
-    \"\"\"
+    """
     if DATABRICKS_HOST is None or DATABRICKS_TOKEN is None or ENDPOINT_NAME is None:
         raise RuntimeError(
             "DATABRICKS_HOST, DATABRICKS_TOKEN, dan ENDPOINT_NAME belum diset. "
@@ -135,7 +132,7 @@ def call_databricks_endpoint(records):
         resp.raise_for_status()
     except requests.HTTPError as e:
         raise RuntimeError(
-            f"Error from endpoint: {e}\\nStatus code: {resp.status_code}\\nBody: {resp.text}"
+            f"Error from endpoint: {e}\nStatus code: {resp.status_code}\nBody: {resp.text}"
         )
 
     out = resp.json()
@@ -159,11 +156,12 @@ def call_databricks_endpoint(records):
 # ============================================================
 
 def build_explanations(user_input, score, threshold=0.2):
-    \"\"\"Membuat list penjelasan (string) berbasis feature-value
+    """
+    Membuat list penjelasan (string) berbasis feature-value
     untuk ditampilkan ke tim Marketing.
 
     Ini bukan SHAP teknis, tapi rule-based yang human-friendly.
-    \"\"\"
+    """
     explanations = []
 
     # 1. Segment usia dari age band flags
@@ -178,29 +176,51 @@ def build_explanations(user_input, score, threshold=0.2):
     }
     active_age = [age_map[k] for k in age_map.keys() if float(user_input.get(k, 0) or 0) > 0]
     if active_age:
-        explanations.append(f"• Customer berada di segmen usia **{', '.join(active_age)}**, yang relevan untuk kebutuhan proteksi dan gaya hidup aktif.")
+        explanations.append(
+            f"• Customer berada di segmen usia **{', '.join(active_age)}**, "
+            "yang relevan untuk kebutuhan proteksi dan gaya hidup aktif."
+        )
 
     # 2. Relasi dengan FWD dan pola pembayaran
     if float(user_input.get("fwd_max_flag", 0) or 0) > 0:
-        explanations.append("• Customer sudah memiliki relasi kuat dengan FWD (flag maksimum aktif), sehingga lebih mudah untuk penawaran cross-sell.")
+        explanations.append(
+            "• Customer sudah memiliki relasi kuat dengan FWD (flag maksimum aktif), "
+            "sehingga lebih mudah untuk penawaran cross-sell."
+        )
     if float(user_input.get("yearly_payment", 0) or 0) > 0:
-        explanations.append("• Customer terbiasa dengan **pembayaran tahunan**, yang cocok untuk produk dengan premi lebih besar.")
+        explanations.append(
+            "• Customer terbiasa dengan **pembayaran tahunan**, yang cocok untuk produk dengan premi lebih besar."
+        )
     if float(user_input.get("monthly_payment", 0) or 0) > 0:
-        explanations.append("• Customer terbiasa dengan **pembayaran bulanan**, sehingga bisa ditawarkan skema cicilan yang ringan.")
+        explanations.append(
+            "• Customer terbiasa dengan **pembayaran bulanan**, sehingga bisa ditawarkan skema cicilan yang ringan."
+        )
 
     # 3. Aktivitas E-Commerce & channel pembayaran
     if float(user_input.get("ecomm_counts", 0) or 0) > 0:
-        explanations.append("• Customer sudah aktif di **E-Commerce**, sehingga penawaran Bebas Aksi bisa relevan sebagai proteksi tambahan saat bertransaksi online.")
+        explanations.append(
+            "• Customer sudah aktif di **E-Commerce**, sehingga penawaran Bebas Aksi "
+            "bisa relevan sebagai proteksi tambahan saat bertransaksi online."
+        )
     if float(user_input.get("bank_transfer_payment", 0) or 0) > 0 or float(user_input.get("credit_card_payment", 0) or 0) > 0:
-        explanations.append("• Customer sudah terbiasa menggunakan **channel pembayaran modern** (bank transfer/kartu kredit), memudahkan proses pembelian produk.")
+        explanations.append(
+            "• Customer sudah terbiasa menggunakan **channel pembayaran modern** "
+            "(bank transfer/kartu kredit), memudahkan proses pembelian produk."
+        )
 
     # 4. Premi & jumlah polis
     ape = float(user_input.get("ape_sums", 0) or 0)
     inforce = float(user_input.get("inforce_counts", 0) or 0)
     if ape > 0:
-        explanations.append(f"• Customer memiliki total APE sekitar **{ape:,.0f}**, menunjukkan daya beli yang cukup untuk produk tambahan.")
+        explanations.append(
+            f"• Customer memiliki total APE sekitar **{ape:,.0f}**, "
+            "menunjukkan daya beli yang cukup untuk produk tambahan."
+        )
     if inforce > 0:
-        explanations.append(f"• Customer memiliki **{inforce:.0f} polis aktif**, sehingga sudah familiar dengan produk asuransi.")
+        explanations.append(
+            f"• Customer memiliki **{inforce:.0f} polis aktif**, "
+            "sehingga sudah familiar dengan produk asuransi."
+        )
 
     # 5. Minat & gaya hidup
     interest_features = [
@@ -213,7 +233,11 @@ def build_explanations(user_input, score, threshold=0.2):
         ("shopping", "belanja & lifestyle"),
         ("gadget", "gadget & teknologi"),
     ]
-    active_interests = [label for feat, label in interest_features if float(user_input.get(feat, 0) or 0) > 0]
+    active_interests = [
+        label
+        for feat, label in interest_features
+        if float(user_input.get(feat, 0) or 0) > 0
+    ]
     if active_interests:
         explanations.append(
             "• Customer menunjukkan minat pada **"
@@ -223,11 +247,19 @@ def build_explanations(user_input, score, threshold=0.2):
 
     # 6. Segmentasi skor
     if score >= 0.5:
-        explanations.append("• Model mengklasifikasikan customer ini sebagai **High Potential** untuk cross-sell Bebas Aksi.")
+        explanations.append(
+            "• Model mengklasifikasikan customer ini sebagai **High Potential** untuk cross-sell Bebas Aksi."
+        )
     elif score >= threshold:
-        explanations.append("• Model mengklasifikasikan customer ini sebagai **Medium Potential**; cocok untuk kampanye dengan penawaran yang lebih ringan.")
+        explanations.append(
+            "• Model mengklasifikasikan customer ini sebagai **Medium Potential**; "
+            "cocok untuk kampanye dengan penawaran yang lebih ringan."
+        )
     else:
-        explanations.append("• Model mengklasifikasikan customer ini sebagai **Low Potential**; bisa diprioritaskan lebih rendah dalam kampanye massal.")
+        explanations.append(
+            "• Model mengklasifikasikan customer ini sebagai **Low Potential**; "
+            "bisa diprioritaskan lebih rendah dalam kampanye massal."
+        )
 
     return explanations
 
@@ -240,7 +272,7 @@ st.set_page_config(page_title="Bebas Aksi Cross-Sell Scoring", page_icon="📈")
 st.title("📈 Bebas Aksi Cross-Sell Scoring Demo")
 st.write(
     "Showcase ini mengambil profil customer, mengirimnya ke **Databricks Model Serving**, "
-    "dan mengembalikan **probabilitas** bahwa customer akan membeli produk **Bebas Aksi**.\\n\\n"
+    "dan mengembalikan **probabilitas** bahwa customer akan membeli produk **Bebas Aksi**.\n\n"
     "Halaman ini dirancang agar dapat dipahami baik oleh tim data maupun tim Marketing."
 )
 
@@ -257,7 +289,7 @@ with st.sidebar:
 # Cek config dulu
 if not (DATABRICKS_HOST and DATABRICKS_TOKEN and ENDPOINT_NAME):
     st.error(
-        "DATABRICKS_HOST, DATABRICKS_TOKEN, atau ENDPOINT_NAME belum di-set.\\n"
+        "DATABRICKS_HOST, DATABRICKS_TOKEN, atau ENDPOINT_NAME belum di-set.\n"
         "Set di .streamlit/secrets.toml atau environment variable sebelum menjalankan app."
     )
     st.stop()
@@ -274,20 +306,48 @@ with st.form("input_form"):
         label = feature.replace("_", " ").title()
 
         # Pilih kolom untuk field ini (supaya tersebar)
-        if feature in ["client_id", "gender", "marital_status", "black_list", "occupancy", "fatca", "isfatcacrs", "fatca_indicia"]:
+        if feature in [
+            "client_id",
+            "gender",
+            "marital_status",
+            "black_list",
+            "occupancy",
+            "fatca",
+            "isfatcacrs",
+            "fatca_indicia",
+        ]:
             container = col1
-        elif feature in ["customer_vintage_in_month", "agency_counts", "ecomm_counts", "ape_sums", "inforce_counts", "lapse_counts"]:
+        elif feature in [
+            "customer_vintage_in_month",
+            "agency_counts",
+            "ecomm_counts",
+            "ape_sums",
+            "inforce_counts",
+            "lapse_counts",
+        ]:
             container = col2
         else:
             container = col3
 
         with container:
             if feature == "gender":
-                val = st.selectbox(label, options=["M", "F"], index=0 if default == "M" else 1)
+                val = st.selectbox(
+                    label,
+                    options=["M", "F"],
+                    index=0 if default == "M" else 1,
+                )
             elif feature == "marital_status":
-                val = st.selectbox(label, options=["Single", "Married", "Other"], index=0)
+                val = st.selectbox(
+                    label,
+                    options=["Single", "Married", "Other"],
+                    index=0,
+                )
             elif feature in ["black_list", "fatca", "isfatcacrs", "fatca_indicia"]:
-                val = st.selectbox(label, options=["NO", "YES"], index=0)
+                val = st.selectbox(
+                    label,
+                    options=["NO", "YES"],
+                    index=0,
+                )
             elif ftype == "num":
                 try:
                     default_val = float(default)
@@ -344,4 +404,4 @@ if submitted:
         st.json(user_input)
 
     except Exception as e:
-        st.error(f"Terjadi error saat memanggil endpoint:\\n{e}")
+        st.error(f"Terjadi error saat memanggil endpoint:\n{e}")
