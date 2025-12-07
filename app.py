@@ -8,30 +8,30 @@ import streamlit as st
 # CONFIG: Databricks Serving Endpoint
 # ============================================================
 
-# Disarankan: simpan di .streamlit/secrets.toml:
+# Recommended: store in .streamlit/secrets.toml:
 # DATABRICKS_HOST = "https://dbc-xxxx.cloud.databricks.com"
 # DATABRICKS_TOKEN = "dapixxxxx"
-# ENDPOINT_NAME = "cross_sell_insurance_proba"  # ganti sesuai endpoint kamu
+# ENDPOINT_NAME = "cross_sell_insurance_proba"  # adjust to your endpoint
 
 DATABRICKS_HOST = st.secrets.get("DATABRICKS_HOST", os.getenv("DATABRICKS_HOST"))
 DATABRICKS_TOKEN = st.secrets.get("DATABRICKS_TOKEN", os.getenv("DATABRICKS_TOKEN"))
 ENDPOINT_NAME = st.secrets.get("ENDPOINT_NAME", os.getenv("ENDPOINT_NAME", "cross_sell_insurance_proba"))
 
 # ============================================================
-# FEATURE SCHEMA – HARUS MATCH DENGAN SIGNATURE ENDPOINT
+# FEATURE SCHEMA – MUST MATCH ENDPOINT SIGNATURE
 # ============================================================
 # Format:
-#   "nama_kolom": (tipe, default_value)
-#   tipe:
-#       - "num"  : numeric (int/float, termasuk count / amount)
+#   "column_name": (type, default_value)
+#   type:
+#       - "num"  : numeric (int/float, including counts / amounts)
 #       - "cat"  : categorical / string
-#       - "flag" : 0/1 yang diinput via checkbox, dikirim sebagai float 0.0/1.0
+#       - "flag" : 0/1 via checkbox, sent as float 0.0/1.0
 
 FEATURE_SCHEMA = {
     # ID
     "client_id": ("num", 1),
 
-    # Demografi & FATCA
+    # Demographic & FATCA
     "gender": ("cat", "M"),
     "marital_status": ("cat", "Single"),
     "black_list": ("cat", "NO"),
@@ -71,7 +71,7 @@ FEATURE_SCHEMA = {
     "monthly_payment": ("flag", 0),
     "single_payment": ("flag", 0),
 
-    # Premi & policy status
+    # Premium & policy status
     "ape_sums": ("num", 15000000.0),
     "inforce_counts": ("num", 2.0),
     "lapse_counts": ("num", 0.0),
@@ -97,20 +97,20 @@ FEATURE_SCHEMA = {
 }
 
 # ============================================================
-# Helper: panggil Databricks Serving Endpoint
+# Helper: call Databricks Serving Endpoint
 # ============================================================
 
 def call_databricks_endpoint(records):
     """
-    Mengirim list of dict (records) ke Databricks Serving Endpoint
-    dan mengembalikan list skor prediksi (probability 0–1).
+    Send a list of dicts (records) to Databricks Serving Endpoint
+    and return a list of prediction scores (probabilities 0–1).
 
-    records: list[dict] - tiap dict = 1 row fitur
+    records: list[dict] - each dict = 1 row of features
     """
     if DATABRICKS_HOST is None or DATABRICKS_TOKEN is None or ENDPOINT_NAME is None:
         raise RuntimeError(
-            "DATABRICKS_HOST, DATABRICKS_TOKEN, dan ENDPOINT_NAME belum diset. "
-            "Set di .streamlit/secrets.toml atau environment variable."
+            "DATABRICKS_HOST, DATABRICKS_TOKEN, and ENDPOINT_NAME are not set. "
+            "Please configure them via .streamlit/secrets.toml or environment variables."
         )
 
     url = f"{DATABRICKS_HOST}/serving-endpoints/{ENDPOINT_NAME}/invocations"
@@ -138,7 +138,7 @@ def call_databricks_endpoint(records):
     out = resp.json()
     preds = out.get("predictions", out)
 
-    # Jika output list of dict, ambil key 'prediction' kalau ada, atau value pertama
+    # If output is a list of dicts, pick 'prediction' if available or the first value
     if len(preds) > 0 and isinstance(preds[0], dict):
         scores = []
         for p in preds:
@@ -152,86 +152,86 @@ def call_databricks_endpoint(records):
     return scores
 
 # ============================================================
-# Helper: bangun penjelasan marketing-friendly dari input
+# Helper: marketing-friendly explanations
 # ============================================================
 
 def build_explanations(user_input, score, threshold=0.2):
     """
-    Membuat list penjelasan (string) berbasis feature-value
-    untuk ditampilkan ke tim Marketing.
+    Build a list of human-friendly explanation bullets
+    based on feature values, for Marketing and Business users.
 
-    Ini bukan SHAP teknis, tapi rule-based yang human-friendly.
+    This is not SHAP, but a rule-based narrative on top of the model.
     """
     explanations = []
 
-    # 1. Segment usia dari age band flags
+    # 1. Age segment from band flags
     age_map = {
-        "le17": "≤ 17 tahun",
-        "18-21": "18–21 tahun",
-        "22-27": "22–27 tahun",
-        "28-34": "28–34 tahun",
-        "35-39": "35–39 tahun",
-        "40-49": "40–49 tahun",
-        "ge50": "≥ 50 tahun",
+        "le17": "≤ 17 years",
+        "18-21": "18–21 years",
+        "22-27": "22–27 years",
+        "28-34": "28–34 years",
+        "35-39": "35–39 years",
+        "40-49": "40–49 years",
+        "ge50": "≥ 50 years",
     }
     active_age = [age_map[k] for k in age_map.keys() if float(user_input.get(k, 0) or 0) > 0]
     if active_age:
         explanations.append(
-            f"• Customer berada di segmen usia **{', '.join(active_age)}**, "
-            "yang relevan untuk kebutuhan proteksi dan gaya hidup aktif."
+            f"• The customer is in the **{', '.join(active_age)}** age segment, "
+            "which is relevant for additional protection and active lifestyle products."
         )
 
-    # 2. Relasi dengan FWD dan pola pembayaran
+    # 2. Relationship with FWD and payment behaviour
     if float(user_input.get("fwd_max_flag", 0) or 0) > 0:
         explanations.append(
-            "• Customer sudah memiliki relasi kuat dengan FWD (flag maksimum aktif), "
-            "sehingga lebih mudah untuk penawaran cross-sell."
+            "• The customer already has a strong relationship with FWD (maximum flag active), "
+            "which makes cross-sell offers more natural."
         )
     if float(user_input.get("yearly_payment", 0) or 0) > 0:
         explanations.append(
-            "• Customer terbiasa dengan **pembayaran tahunan**, yang cocok untuk produk dengan premi lebih besar."
+            "• The customer is used to **yearly premium payments**, which fits products with higher premium amounts."
         )
     if float(user_input.get("monthly_payment", 0) or 0) > 0:
         explanations.append(
-            "• Customer terbiasa dengan **pembayaran bulanan**, sehingga bisa ditawarkan skema cicilan yang ringan."
+            "• The customer is used to **monthly payments**, so an affordable instalment plan can be attractive."
         )
 
-    # 3. Aktivitas E-Commerce & channel pembayaran
+    # 3. E-Commerce activity & payment channels
     if float(user_input.get("ecomm_counts", 0) or 0) > 0:
         explanations.append(
-            "• Customer sudah aktif di **E-Commerce**, sehingga penawaran Bebas Aksi "
-            "bisa relevan sebagai proteksi tambahan saat bertransaksi online."
+            "• The customer is already active in **E-Commerce**, which makes Bebas Aksi relevant "
+            "as additional protection for online transactions and daily activities."
         )
     if float(user_input.get("bank_transfer_payment", 0) or 0) > 0 or float(user_input.get("credit_card_payment", 0) or 0) > 0:
         explanations.append(
-            "• Customer sudah terbiasa menggunakan **channel pembayaran modern** "
-            "(bank transfer/kartu kredit), memudahkan proses pembelian produk."
+            "• The customer already uses **modern payment channels** (bank transfer/credit card), "
+            "so the purchase process for new products is frictionless."
         )
 
-    # 4. Premi & jumlah polis
+    # 4. Premium & number of policies
     ape = float(user_input.get("ape_sums", 0) or 0)
     inforce = float(user_input.get("inforce_counts", 0) or 0)
     if ape > 0:
         explanations.append(
-            f"• Customer memiliki total APE sekitar **{ape:,.0f}**, "
-            "menunjukkan daya beli yang cukup untuk produk tambahan."
+            f"• The customer has a total APE of approximately **{ape:,.0f}**, "
+            "indicating sufficient spending capacity for an additional product."
         )
     if inforce > 0:
         explanations.append(
-            f"• Customer memiliki **{inforce:.0f} polis aktif**, "
-            "sehingga sudah familiar dengan produk asuransi."
+            f"• The customer currently holds **{inforce:.0f} in-force policies**, "
+            "showing familiarity with insurance products."
         )
 
-    # 5. Minat & gaya hidup
+    # 5. Interests & lifestyle
     interest_features = [
-        ("travel", "perjalanan & travelling"),
-        ("sport", "olahraga"),
-        ("health", "kesehatan & wellness"),
-        ("children", "keluarga & anak"),
-        ("automotive", "kendaraan & otomotif"),
-        ("culinary", "kuliner & gaya hidup"),
-        ("shopping", "belanja & lifestyle"),
-        ("gadget", "gadget & teknologi"),
+        ("travel", "travel & holidays"),
+        ("sport", "sports"),
+        ("health", "health & wellness"),
+        ("children", "family & children"),
+        ("automotive", "vehicles & automotive"),
+        ("culinary", "food & lifestyle"),
+        ("shopping", "shopping & lifestyle"),
+        ("gadget", "gadgets & technology"),
     ]
     active_interests = [
         label
@@ -240,28 +240,55 @@ def build_explanations(user_input, score, threshold=0.2):
     ]
     if active_interests:
         explanations.append(
-            "• Customer menunjukkan minat pada **"
+            "• The customer shows interest in **"
             + ", ".join(active_interests)
-            + "**, yang bisa dijadikan angle komunikasi kampanye."
+            + "**, which can be used as angles for personalised campaign content."
         )
 
-    # 6. Segmentasi skor
+    # 6. Score segment
     if score >= 0.5:
         explanations.append(
-            "• Model mengklasifikasikan customer ini sebagai **High Potential** untuk cross-sell Bebas Aksi."
+            "• The model classifies this customer as **High Potential** for Bebas Aksi cross-sell."
         )
     elif score >= threshold:
         explanations.append(
-            "• Model mengklasifikasikan customer ini sebagai **Medium Potential**; "
-            "cocok untuk kampanye dengan penawaran yang lebih ringan."
+            "• The model classifies this customer as **Medium Potential**, "
+            "suitable for lighter offers or follow-up campaigns."
         )
     else:
         explanations.append(
-            "• Model mengklasifikasikan customer ini sebagai **Low Potential**; "
-            "bisa diprioritaskan lebih rendah dalam kampanye massal."
+            "• The model classifies this customer as **Low Potential**, "
+            "and they can be deprioritised in targeted campaigns."
         )
 
     return explanations
+
+# ============================================================
+# Key model drivers (feature importance summary)
+# ============================================================
+
+TOP_DRIVERS = {
+    "Ecomm_Counts": (
+        "Customers with more E-Commerce transactions tend to be more engaged "
+        "digitally and are more likely to respond to Bebas Aksi as an add-on protection."
+    ),
+    "Occupancy_IN24": (
+        "Customers with occupancy **IN24** (specific occupation segment) show a higher "
+        "propensity to purchase Bebas Aksi, possibly due to their risk profile and lifestyle."
+    ),
+    "Yearly_Payment": (
+        "Customers who pay premiums **yearly** are typically more committed and comfortable "
+        "with larger lump-sum payments, making them good candidates for additional coverage."
+    ),
+    "Occupancy_SA33": (
+        "Customers in occupancy **SA33** form a segment with above-average likelihood to "
+        "buy Bebas Aksi, based on their historical behaviour in the portfolio."
+    ),
+    "Occupancy_IN23": (
+        "Customers in occupancy **IN23** also contribute strongly to the model’s prediction, "
+        "indicating this occupational segment is attractive for cross-sell."
+    ),
+}
 
 # ============================================================
 # Streamlit UI
@@ -270,42 +297,67 @@ def build_explanations(user_input, score, threshold=0.2):
 st.set_page_config(page_title="Bebas Aksi Cross-Sell Scoring", page_icon="📈")
 
 st.title("📈 Bebas Aksi Cross-Sell Scoring Demo")
+
 st.write(
-    "Showcase ini mengambil profil customer, mengirimnya ke **Databricks Model Serving**, "
-    "dan mengembalikan **probabilitas** bahwa customer akan membeli produk **Bebas Aksi**.\n\n"
-    "Halaman ini dirancang agar dapat dipahami baik oleh tim data maupun tim Marketing."
+    "This showcase takes a customer profile, sends it to a **Databricks Model Serving Endpoint**, "
+    "and returns the **probability** that the customer will buy the **Bebas Aksi** product.\n\n"
+    "The page is designed so both Data teams and Marketing teams can understand and use it."
 )
 
+# --- Key model drivers section (at the top) ---
+st.markdown("### 🔑 Key Model Drivers")
+
+st.info(
+    "Based on the trained Logistic Regression model, the most important features driving the "
+    "Bebas Aksi propensity score are:\n\n"
+    "- **Ecomm_Counts**\n"
+    "- **Occupancy_IN24**\n"
+    "- **Yearly_Payment**\n"
+    "- **Occupancy_SA33**\n"
+    "- **Occupancy_IN23**"
+)
+
+selected_driver = st.selectbox(
+    "Select a key driver to see a short business explanation:",
+    list(TOP_DRIVERS.keys()),
+)
+
+st.markdown(f"**{selected_driver}**")
+st.write(TOP_DRIVERS[selected_driver])
+
+st.markdown("---")
+
 with st.sidebar:
-    st.header("⚙️ Endpoint Config")
+    st.header("⚙️ Endpoint Configuration")
     st.text_input("Databricks Host", value=DATABRICKS_HOST or "", disabled=True)
     st.text_input("Endpoint Name", value=ENDPOINT_NAME or "", disabled=True)
     st.markdown("---")
     st.caption(
-        "Host, token, dan nama endpoint dikonfigurasi lewat Streamlit secrets "
-        "atau environment variables (DATABRICKS_HOST, DATABRICKS_TOKEN, ENDPOINT_NAME)."
+        "Host, token, and endpoint name are configured via Streamlit secrets "
+        "or environment variables (DATABRICKS_HOST, DATABRICKS_TOKEN, ENDPOINT_NAME)."
     )
 
-# Cek config dulu
+# Check config
 if not (DATABRICKS_HOST and DATABRICKS_TOKEN and ENDPOINT_NAME):
     st.error(
-        "DATABRICKS_HOST, DATABRICKS_TOKEN, atau ENDPOINT_NAME belum di-set.\n"
-        "Set di .streamlit/secrets.toml atau environment variable sebelum menjalankan app."
+        "DATABRICKS_HOST, DATABRICKS_TOKEN, or ENDPOINT_NAME is not set.\n"
+        "Please configure them in .streamlit/secrets.toml or as environment variables "
+        "before running the app."
     )
     st.stop()
 
-st.markdown("### 🧾 Input Profil Customer")
+st.markdown("### 🧾 Customer Profile Input")
 
 with st.form("input_form"):
     user_input = {}
 
-    # Form dibuat dalam 3 kolom agar lebih rapi
+    # Layout in 3 columns for readability
     col1, col2, col3 = st.columns(3)
 
     for feature, (ftype, default) in FEATURE_SCHEMA.items():
         label = feature.replace("_", " ").title()
 
-        # Pilih kolom untuk field ini (supaya tersebar)
+        # Decide which column to place the field in
         if feature in [
             "client_id",
             "gender",
@@ -363,10 +415,10 @@ with st.form("input_form"):
 
         user_input[feature] = val
 
-    submitted = st.form_submit_button("🚀 Hitung Probabilitas")
+    submitted = st.form_submit_button("🚀 Calculate Probability")
 
 if submitted:
-    st.markdown("### 📊 Hasil Skoring")
+    st.markdown("### 📊 Scoring Result")
 
     try:
         scores = call_databricks_endpoint([user_input])
@@ -376,32 +428,32 @@ if submitted:
 
         with col_main:
             st.metric(
-                label="Probabilitas Customer Membeli Bebas Aksi",
+                label="Probability the Customer Buys Bebas Aksi",
                 value=f"{score:.2%}",
-                help="Nilai ini berasal dari model di Databricks yang mengembalikan probabilitas (0–1).",
+                help="This value comes from the model deployed in Databricks and represents a probability between 0 and 1.",
             )
-            # Progress bar sebagai visual
+            # Progress bar for quick visual impression
             st.progress(min(max(score, 0.0), 1.0))
 
         with col_side:
-            # Segmentasi sederhana
+            # Simple segmentation
             if score >= 0.5:
-                st.success("Segmen: **High Potential**")
+                st.success("Segment: **High Potential**")
             elif score >= 0.2:
-                st.info("Segmen: **Medium Potential**")
+                st.info("Segment: **Medium Potential**")
             else:
-                st.warning("Segmen: **Low Potential**")
+                st.warning("Segment: **Low Potential**")
 
         st.markdown("---")
-        st.subheader("💡 Penjelasan untuk Tim Marketing")
+        st.subheader("💡 Explanations for Marketing")
 
         explanations = build_explanations(user_input, score, threshold=0.2)
         for exp in explanations:
             st.markdown(exp)
 
         st.markdown("---")
-        st.subheader("🔍 Payload Lengkap yang Dikirim ke Endpoint")
+        st.subheader("🔍 Full Payload Sent to the Endpoint")
         st.json(user_input)
 
     except Exception as e:
-        st.error(f"Terjadi error saat memanggil endpoint:\n{e}")
+        st.error(f"An error occurred while calling the endpoint:\n{e}")
