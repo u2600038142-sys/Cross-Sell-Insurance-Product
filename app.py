@@ -1,5 +1,4 @@
 import os
-import json
 import numpy as np
 import pandas as pd
 import requests
@@ -12,71 +11,142 @@ import streamlit as st
 # Disarankan: simpan di .streamlit/secrets.toml:
 # DATABRICKS_HOST = "https://dbc-xxxx.cloud.databricks.com"
 # DATABRICKS_TOKEN = "dapixxxxx"
-# ENDPOINT_NAME = "Lapse_Score_Insurance1"  # ganti sesuai endpoint kamu
+# ENDPOINT_NAME = "cross_sell_insurance"  # ganti sesuai endpoint kamu
 
 DATABRICKS_HOST = st.secrets.get("DATABRICKS_HOST", os.getenv("DATABRICKS_HOST"))
 DATABRICKS_TOKEN = st.secrets.get("DATABRICKS_TOKEN", os.getenv("DATABRICKS_TOKEN"))
-ENDPOINT_NAME = st.secrets.get("ENDPOINT_NAME", os.getenv("ENDPOINT_NAME", "Lapse_Score_Insurance1"))
+ENDPOINT_NAME = st.secrets.get("ENDPOINT_NAME", os.getenv("ENDPOINT_NAME", "cross_sell_insurance"))
 
 # ============================================================
-# FEATURE SCHEMA
+# FEATURE SCHEMA – HARUS MATCH DENGAN SIGNATURE ENDPOINT
 # ============================================================
-# NOTE PENTING:
-# - Lengkapi FEATURE_SCHEMA ini agar SESUAI dengan kolom yang digunakan
-#   waktu training di table:
-#   cross_sell_insurance.01_feature_staging.stage2_clean_feature_table
-# - Kolom target (is_target_customer) TIDAK usah dimasukkan.
+# Berdasarkan error message endpoint, input schema yang diharapkan:
+# ['client_id': integer (required),
+#  'gender': string (optional),
+#  'marital_status': string (optional),
+#  'black_list': string (required),
+#  'occupancy': string (optional),
+#  'fatca': string (required),
+#  'isfatcacrs': string (required),
+#  'fatca_indicia': string (required),
+#  'le17': integer (required),
+#  '18-21': integer (required),
+#  '22-27': integer (required),
+#  '28-34': integer (required),
+#  '35-39': integer (required),
+#  '40-49': integer (required),
+#  'ge50': integer (required),
+#  'customer_vintage_in_month': double (optional),
+#  'agency_counts': double (optional),
+#  'ecomm_counts': double (optional),
+#  'accident_counts': double (optional),
+#  'cl_counts': double (optional),
+#  'rpul_counts': double (optional),
+#  'spul_counts': double (optional),
+#  'traditional_counts': double (optional),
+#  'credit_card_payment': double (optional),
+#  'bank_transfer_payment': double (optional),
+#  'auto_debet_payment': double (optional),
+#  'yearly_payment': double (optional),
+#  'halfyearly_payment': double (optional),
+#  'quarterly_payment': double (optional),
+#  'monthly_payment': double (optional),
+#  'single_payment': double (optional),
+#  'ape_sums': double (optional),
+#  'inforce_counts': double (optional),
+#  'lapse_counts': double (optional),
+#  'fwd_max_flag': double (optional),
+#  'automotive': double (optional),
+#  'book_&_movie': double (optional),
+#  'children': double (optional),
+#  'culinary': double (optional),
+#  'fashion': double (optional),
+#  'gadget': double (optional),
+#  'gasoline': double (optional),
+#  'go-pay': double (optional),
+#  'health': double (optional),
+#  'home_expense': double (optional),
+#  'music': double (optional),
+#  'property': double (optional),
+#  'shopping': double (optional),
+#  'sport': double (optional),
+#  'style': double (optional),
+#  'travel': double (optional)]
 #
+# Kita definisikan skema ini sebagai FEATURE_SCHEMA.
 # Format:
 #   "nama_kolom": (tipe, default_value)
 #   tipe:
-#       - "num"  : numeric (int/float)
+#       - "num"  : numeric (int/float, termasuk 0/1 flag)
 #       - "cat"  : categorical / string
-#       - "bool" : checkbox yang di-convert ke 0/1
-#
-# Silakan menambah / mengurangi kolom sesuai kebutuhan.
 
 FEATURE_SCHEMA = {
-    # Contoh kolom numeric
-    "insured_age": ("num", 35),
-    "policy_counts": ("num", 3),
-    "customer_vintage_in_month": ("num", 24),
-    "ecomm_counts": ("num", 1),
-    "ape_sums": ("num", 15000000),
-    "inforce_counts": ("num", 2),
-    "lapse_counts": ("num", 0),
+    # ID
+    "client_id": ("num", 1),
 
-    # Contoh kolom pembayaran (numerik flag 0/1)
-    "yearly_payment": ("num", 1),
-    "halfyearly_payment": ("num", 0),
-    "quarterly_payment": ("num", 0),
-    "monthly_payment": ("num", 0),
-    "single_payment": ("num", 0),
-
-    # Contoh kolom kategorikal
+    # Demografi & FATCA
     "gender": ("cat", "M"),
     "marital_status": ("cat", "Single"),
     "black_list": ("cat", "NO"),
     "occupancy": ("cat", "IN24"),
+    "fatca": ("cat", "NO"),
+    "isfatcacrs": ("cat", "NO"),
+    "fatca_indicia": ("cat", "NO"),
 
-    # Contoh preferensi minat (numerik flag 0/1)
-    "automotive": ("num", 0),
-    "children": ("num", 0),
-    "culinary": ("num", 1),
-    "fashion": ("num", 0),
-    "gadget": ("num", 0),
-    "health": ("num", 0),
-    "travel": ("num", 0),
+    # Age band flags (0/1)
+    "le17": ("num", 0),
+    "18-21": ("num", 0),
+    "22-27": ("num", 0),
+    "28-34": ("num", 0),
+    "35-39": ("num", 1),
+    "40-49": ("num", 0),
+    "ge50": ("num", 0),
 
-    # TODO: tambahkan kolom lain sesuai schema asli stage2_clean_feature_table
-    # Misal:
-    # "fatca": ("cat", "NO"),
-    # "isfatcaacrs": ("cat", "NO"),
-    # "fatca_indicia": ("cat", "NO"),
-    # "credit_card_payment": ("num", 0),
-    # "bank_transfer_payment": ("num", 0),
-    # "auto_debet_payment": ("num", 0),
-    # dst...
+    # Vintage & counts
+    "customer_vintage_in_month": ("num", 24.0),
+    "agency_counts": ("num", 1.0),
+    "ecomm_counts": ("num", 1.0),
+    "accident_counts": ("num", 0.0),
+    "cl_counts": ("num", 0.0),
+    "rpul_counts": ("num", 0.0),
+    "spul_counts": ("num", 0.0),
+    "traditional_counts": ("num", 1.0),
+
+    # Payment channel flags
+    "credit_card_payment": ("num", 0.0),
+    "bank_transfer_payment": ("num", 1.0),
+    "auto_debet_payment": ("num", 0.0),
+
+    # Payment frequency flags
+    "yearly_payment": ("num", 1.0),
+    "halfyearly_payment": ("num", 0.0),
+    "quarterly_payment": ("num", 0.0),
+    "monthly_payment": ("num", 0.0),
+    "single_payment": ("num", 0.0),
+
+    # Premi & policy status
+    "ape_sums": ("num", 15000000.0),
+    "inforce_counts": ("num", 2.0),
+    "lapse_counts": ("num", 0.0),
+    "fwd_max_flag": ("num", 1.0),
+
+    # Interest / spending categories
+    "automotive": ("num", 0.0),
+    "book_&_movie": ("num", 0.0),
+    "children": ("num", 0.0),
+    "culinary": ("num", 1.0),
+    "fashion": ("num", 0.0),
+    "gadget": ("num", 0.0),
+    "gasoline": ("num", 0.0),
+    "go-pay": ("num", 0.0),
+    "health": ("num", 0.0),
+    "home_expense": ("num", 0.0),
+    "music": ("num", 0.0),
+    "property": ("num", 0.0),
+    "shopping": ("num", 0.0),
+    "sport": ("num", 0.0),
+    "style": ("num", 0.0),
+    "travel": ("num", 0.0),
 }
 
 # ============================================================
@@ -172,22 +242,17 @@ with st.form("input_form"):
     user_input = {}
 
     for feature, (ftype, default) in FEATURE_SCHEMA.items():
+        # Label lebih rapih tapi key tetap nama kolom asli
         label = feature.replace("_", " ").title()
 
         if ftype == "num":
-            # Numeric input
             try:
                 default_val = float(default)
             except Exception:
                 default_val = 0.0
             val = st.number_input(label, value=default_val)
-        elif ftype == "bool":
-            # Checkbox -> 0/1
-            default_bool = bool(default)
-            val_bool = st.checkbox(label, value=default_bool)
-            val = 1 if val_bool else 0
         else:
-            # Categorical / string
+            # categorical / string
             val = st.text_input(label, value=str(default))
 
         user_input[feature] = val
