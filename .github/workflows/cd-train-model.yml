@@ -1,0 +1,41 @@
+name: CD - Train Cross Sell Model
+
+on:
+  push:
+    branches:
+      - main     # ganti kalau mau pakai branch lain
+
+  workflow_dispatch:   # supaya bisa dijalankan manual
+
+jobs:
+  train-model:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Trigger Databricks Job - Training_New_Model
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_JOB_ID: ${{ secrets.DATABRICKS_TRAIN_JOB_ID }}
+        run: |
+          echo "Triggering Databricks job $DATABRICKS_JOB_ID on $DATABRICKS_HOST"
+
+          RESPONSE=$(curl -s -X POST "$DATABRICKS_HOST/api/2.1/jobs/run-now" \
+            -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"job_id\": $DATABRICKS_JOB_ID
+            }")
+
+          echo "Response: $RESPONSE"
+
+          RUN_ID=$(echo "$RESPONSE" | python -c "import sys, json; print(json.load(sys.stdin).get('run_id', ''))")
+          if [ -z "$RUN_ID" ]; then
+            echo "Failed to get run_id from Databricks response"
+            exit 1
+          fi
+
+          echo "Databricks run_id: $RUN_ID"
