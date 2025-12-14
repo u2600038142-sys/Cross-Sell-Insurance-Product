@@ -1,0 +1,97 @@
+name: CD - Train Cross Sell Model
+
+on:
+  push:
+    branches:
+      - main     # ganti kalau mau trigger dari branch lain
+
+  workflow_dispatch:   # bisa dijalankan manual dari UI GitHub
+
+jobs:
+  train-model:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo (optional, kalau belum perlu baca file repo bisa di-skip)
+        uses: actions/checkout@v4
+
+      - name: Trigger Databricks Job - Training_New_Model
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_JOB_ID: ${{ secrets.DATABRICKS_TRAIN_JOB_ID }}
+        run: |
+          echo "Triggering Databricks job $DATABRICKS_JOB_ID on $DATABRICKS_HOST"
+
+          RESPONSE=$(curl -s -X POST "$DATABRICKS_HOST/api/2.1/jobs/run-now" \
+            -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"job_id\": $DATABRICKS_JOB_ID
+            }")
+
+          echo "Response: $RESPONSE"
+
+          # Ambil run_id untuk referensi / debugging
+          RUN_ID=$(echo "$RESPONSE" | python -c "import sys, json; print(json.load(sys.stdin).get('run_id', ''))")
+          if [ -z "$RUN_ID" ]; then
+            echo "Failed to get run_id from Databricks response"
+            exit 1
+          fi
+
+          echo "Databricks run_id: $RUN_ID"
+
+      # (OPSIONAL) Step untuk ngecek status sampai selesai
+      - name: Wait for Databricks job run to finish
+        if: ${{ success() }}   # hanya kalau step sebelumnya sukses
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_JOB_ID: ${{ secrets.DATABRICKS_TRAIN_JOB_ID }}
+        run: |
+          echo "Checking last run for job $DATABRICKS_JOB_ID"
+
+          # Poll status run terakhir setiap 30 detik, max ~20 menit
+          MAX_ATTEMPTS=40
+          SLEEP_SECONDS=30
+          ATTEMPT=1
+
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]
+          do
+            echo "Attempt $ATTEMPT: getting job runs..."
+            RESPONSE=$(curl -s -X GET "$DATABRICKS_HOST/api/2.1/jobs/runs/list?job_id=$DATABRICKS_JOB_ID&limit=1" \
+              -H "Authorization: Bearer $DATABRICKS_TOKEN")
+
+            echo "Response: $RESPONSE"
+
+            STATE=$(echo "$RESPONSE" | python -c "import sys, json; 
+from sys import exit as _e
+data=json.load(sys.stdin)
+runs=data.get('runs', [])
+print(runs[0]['state']['life_cycle_state'] if runs else '')")
+
+            RESULT_STATE=$(echo "$RESPONSE" | python -c "import sys, json; 
+from sys import exit as _e
+data=json.load(sys.stdin)
+runs=data.get('runs', [])
+print(runs[0]['state'].get('result_state', '') if runs else '')")
+
+            echo "Life cycle state: $STATE, result_state: $RESULT_STATE"
+
+            if [ "$STATE" = "TERMINATED" ] || [ "$STATE" = "INTERNAL_ERROR" ] || [ "$STATE" = "SKIPPED" ]; then
+              if [ "$RESULT_STATE" = "SUCCESS" ]; then
+                echo "Databricks job completed successfully ✅"
+                exit 0
+              else
+                echo "Databricks job finished but not successful (result_state=$RESULT_STATE) ❌"
+                exit 1
+              fi
+            fi
+
+            echo "Job still running... sleeping $SLEEP_SECONDS seconds"
+            sleep $SLEEP_SECONDS
+            ATTEMPT=$((ATTEMPT+1))
+          done
+
+          echo "Timeout waiting for Databricks job to finish ❌"
+          exit 1
